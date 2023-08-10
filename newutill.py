@@ -79,6 +79,10 @@ def get_user(id):
     else:
         return False
 
+def get_users():
+    db = client.stock_game
+    user = db.users.find()
+    return list(user)
 # TRADE FUNCTION
 
 def get_user_stock_info(user_id):
