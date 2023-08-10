@@ -138,14 +138,14 @@ def sell_stock(user_id, company, amount):
         user_stock_info = [ item for item in result['stocks'] if item['company'] == company ]
         if user_stock_info:
             new_amount = user_stock_info[0]['amount'] - amount
-            if new_amount <= 0:
+            if new_amount == 0:
                 client.stock_game.user_stocks_info.update_one(
                     {"id": int(user_id)},
                     {
                         "$pull": {"stocks": {"company": company}}
                     }
                 )
-            else:
+            elif new_amount > 0:
                 total = amount * user_stock_info[0]['price']
                 client.stock_game.user_stocks_info.update_one(
                     {"id": int(user_id), "stocks.company": company},
@@ -153,8 +153,11 @@ def sell_stock(user_id, company, amount):
                         "$inc": {"stocks.$.amount": -amount, "stocks.$.total": -total}
                     }
                 )
+            else:
+                st.error("보유한 주식수량 보다 매도수량이 더 많습니다.")
+                return
             update_stock(company, {"$inc" : {"amount" : amount}})
             update_user(user_id, {"$inc" : {"account" : account_total}})
             st.success("정상매도 되었습니다.")
     else:
-        st.error("해당 주식이 존재하지 않습니다.")
+        st.error("해당 주식을 소유하고 있지 않습니다.")

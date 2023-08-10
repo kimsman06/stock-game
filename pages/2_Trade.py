@@ -15,8 +15,8 @@ df = df[["회사명", "가격", "수량", "등락률", "뉴스"]]
 config = {"등락률" : st.column_config.NumberColumn(format="%f%%")}
 st.dataframe(df, use_container_width=True, hide_index=True, column_config=config)
 
-id = st.text_input("학번을 입력하세요.", 0)
-reload = st.button("새로고침")
+id = st.text_input("학번을 입력하세요.")
+reload = st.button("새로고침", use_container_width=True)
 
 if reload:
     with st.spinner("새로고침 중..."):
