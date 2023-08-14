@@ -3,13 +3,14 @@ import pymongo, random
 from bson.objectid import ObjectId
 from data import company_list
 
-uri = f"mongodb+srv://{st.secrets.mongo.username}:{st.secrets.mongo.password}@{st.secrets.mongo.url}/?retryWrites=true&w=majority"
+uri = st.secrets['mongo']['uri']
 
 @st.cache_resource
 def init_connection():
     return pymongo.MongoClient(uri)
 
 client = init_connection()
+db = client.stock_game
 
 # STOCK
 def initial_stock():
@@ -20,20 +21,22 @@ def initial_stock():
         amount = company['amount']
         news = company['news'][random.randint(0,7)]['content']
         documents.append(dict([("company", company_name), ("price", price), ("amount", amount), ("news", news), ("updown_ratio", 0)]))
-    client.stock_game.users.delete_many({"_id": {"$ne": ObjectId(st.secrets["mongo"]["adminId"])}})
-    client.stock_game.user_stocks_info.delete_many({})
-    client.stock_game.stocks.delete_many({})
-    client.stock_game.stocks.insert_many(documents)
-    client.stock_game.users.update_many({}, {"$set": {"account": 1000000}})
+    db.users.delete_many({"_id": {"$ne": ObjectId(st.secrets["mongo"]["adminId"])}})
+    db.user_stocks_info.delete_many({})
+    db.stocks.delete_many({})
+    db.stocks.insert_many(documents)
+    db.users.update_many({}, {"$set": {"account": 1000000}})
 
 def get_stock_data():
-    db = client.stock_game
     items = db.stocks.find()
-    items = list(items)  # make hashable for st.cache_data
+    items = list(items)
     return items
 
 def get_stock_find_one(company):
-    return client.stock_game.stocks.find_one({"company": company})
+    return db.stocks.find_one({"company": company})
+
+def update_stock(company, update):
+    return db.stocks.find_one_and_update({"company" : company}, update)
 
 def update_stock_info():
     price = 0
@@ -53,26 +56,24 @@ def update_stock_info():
         else:
             price = original_price
         updown = round((price - original_price) / original_price * 100, 1)    
-        result = client.stock_game.stocks.find_one_and_update({"company": company['company']}, {"$set": {"price" : int(price), "news" : company['news'][rand_num]['content'], "updown_ratio" : updown}})
+        result = db.stocks.find_one_and_update(
+            {"company": company['company']}, 
+            {"$set": {"price" : int(price), "news" : company['news'][rand_num]['content'], "updown_ratio" : updown}})
     return result
 
-def update_stock(company, update):
-    return client.stock_game.stocks.find_one_and_update({"company" : company}, update)
-
 # USERS
-def update_user(id, update):
-    return client.stock_game.users.find_one_and_update({"id": int(id)}, update)
-
 def create_user(id, username):
     try:
-        result = client.stock_game.users.insert_one({"id": int(id), "name": username, "account":int(1000000)})
+        db.users.insert_one({
+            "id": int(id), "name": username, 
+            "account":int(1000000)
+            })
         return True
     except pymongo.errors.OperationFailure:
         print("An authentication error was received. Are you sure your database user is authorized to perform write operations?")
         return False
 
 def get_user(id):
-    db = client.stock_game
     user = db.users.find_one({"id": int(id)})
     if user is not None:
         return user
@@ -80,13 +81,15 @@ def get_user(id):
         return False
 
 def get_users():
-    db = client.stock_game
     user = db.users.find()
     return list(user)
-# TRADE FUNCTION
 
+def update_user(id, update):
+    return db.users.find_one_and_update({"id": int(id)}, update)
+
+# TRADE FUNCTION
 def get_user_stock_info(user_id):
-    return client.stock_game.user_stocks_info.find_one({"id": int(user_id)})
+    return db.user_stocks_info.find_one({"id": int(user_id)})
 
 def avg_stock_pice(prev_price, cur_price, amount):
     return (prev_price + cur_price) / amount
@@ -97,11 +100,11 @@ def buy_stock(user_id, company, amount):
     total = stock_info['price'] * amount
 
     if stock_info['amount'] >= amount and user_info['account'] >= total:
-        result = client.stock_game.user_stocks_info.find_one({"id": int(user_id), "stocks.company": company})
-        if result:
-            user_stock_info = [ item for item in result['stocks'] if item['company'] == company ]
-            price = avg_stock_pice(user_stock_info[0]['total'], total, user_stock_info[0]['amount'] + amount)
-            client.stock_game.user_stocks_info.update_one(
+        user_stocks = db.user_stocks_info.find_one({"id": int(user_id), "stocks.company": company})
+        if user_stocks:
+            user_stock= [ item for item in user_stocks['stocks'] if item['company'] == company ]
+            price = avg_stock_pice(user_stock[0]['total'], total, user_stock[0]['amount'] + amount)
+            db.user_stocks_info.update_one(
                 {"id": int(user_id), "stocks.company": company},
                 {
                     "$inc": {"stocks.$.amount": amount, "stocks.$.total": total},
@@ -115,7 +118,7 @@ def buy_stock(user_id, company, amount):
                 "price": stock_info['price'],
                 "total": total
             }
-            client.stock_game.user_stocks_info.update_one(
+            db.user_stocks_info.update_one(
                 {"id": int(user_id)},
                 {
                     "$push": {"stocks": new_stock}
@@ -133,13 +136,13 @@ def buy_stock(user_id, company, amount):
 def sell_stock(user_id, company, amount):
     stock_info = get_stock_find_one(company)
     account_total = stock_info['price'] * amount
-    result = client.stock_game.user_stocks_info.find_one({"id": int(user_id), "stocks.company": company})
+    result = db.user_stocks_info.find_one({"id": int(user_id), "stocks.company": company})
     if result:
         user_stock_info = [ item for item in result['stocks'] if item['company'] == company ]
         if user_stock_info:
             new_amount = user_stock_info[0]['amount'] - amount
             if new_amount == 0:
-                client.stock_game.user_stocks_info.update_one(
+                db.user_stocks_info.update_one(
                     {"id": int(user_id)},
                     {
                         "$pull": {"stocks": {"company": company}}
@@ -147,7 +150,7 @@ def sell_stock(user_id, company, amount):
                 )
             elif new_amount > 0:
                 total = amount * user_stock_info[0]['price']
-                client.stock_game.user_stocks_info.update_one(
+                db.user_stocks_info.update_one(
                     {"id": int(user_id), "stocks.company": company},
                     {
                         "$inc": {"stocks.$.amount": -amount, "stocks.$.total": -total}
